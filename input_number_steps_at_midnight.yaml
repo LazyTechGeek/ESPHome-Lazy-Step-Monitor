@@ -1,0 +1,7 @@
+input_number:
+  steps_at_midnight:
+    name: Steps at Midnight
+    min: 0
+    max: 1000000  # 1 million steps — should be more than enough
+    step: 1
+    unit_of_measurement: steps
