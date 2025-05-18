@@ -1,0 +1,7 @@
+- sensor:
+    - name: Mobile Daily Steps
+      unit_of_measurement: "steps"
+      state: >
+        {% set current = states('sensor.YOUR_STEP_SENSOR') | int %}
+        {% set midnight = states('input_number.steps_at_midnight') | int %}
+        {{ [current - midnight, 0] | max }}
