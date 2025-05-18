@@ -1,0 +1,12 @@
+alias: Save Step Count at Midnight
+description: ""
+triggers:
+  - at: "00:00:00"
+    trigger: time
+conditions: []
+actions:
+  - data:
+      entity_id: input_number.steps_at_midnight
+      value: "{{ states('sensor.YOUR_STEP_SENSOR') | int }}"
+    action: input_number.set_value
+mode: single
