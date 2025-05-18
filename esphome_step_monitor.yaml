@@ -1,0 +1,386 @@
+########################################################## 
+# ESPHome: Lazy Step Monitor
+#
+# 📌 Notes:
+#
+# - The 'step_target_status' is recalculated only when:
+#   1️⃣ The ESP boots
+#   2️⃣ The daily_steps sensor updates
+#   3️⃣ The daily_step_target is adjusted
+#
+# 🔤 Font Requirement:
+#
+# - Requires "PixeloidSans.ttf" saved in a folder named "fonts"
+# - Download from: https://github.com/LazyTechGeek/ESPHome-Lazy-Step-Monitor/blob/main/PixeloidSans.ttf
+# - Save the file in your Home Assistant config folder at:
+#   \\<YOUR-HOME-ASSISTANT-IP>\config\esphome\fonts
+#   (create the "fonts" folder if it doesn't exist)
+#
+# 📺 Display Compatibility:
+#
+# Pinout and Settings for Variants I've Tested
+#
+# 1. ESP32-2432S028R / ILI9341 (Micro USB)
+#    - Display: 2.8" TFT, 320x240, ILI9341
+#    - Touch: Resistive
+#    - pin_backlight_pwm: GPIO21
+#    - uart_tx:           GPIO27
+#    - display_model:     ili9341
+#
+# 2. JC2432W328C / ST7789 (USB-C)
+#    - Display: 2.8" TFT, 240x320, ST7789
+#    - Touch: Capacitive
+#    - pin_backlight_pwm: GPIO27
+#    - uart_tx:           GPIO21
+#    - display_model:     st7789v
+#
+# Adjust the driver, pin assignments, and rotation
+# settings below based on which model you're using.
+# Please note: there may be other variants that also work
+# which I haven’t tested or am not yet aware of.
+#
+# --------------------------------------------------------
+# ✅ Only edit values in the substitutions section below
+# 🚫 Do not change anything below unless you know how it works
+##########################################################
+
+substitutions:
+
+  # ==============================
+  # ✏️ USER CONFIGURATION SECTION
+  # Only edit the values below⬇
+  # ==============================
+
+  # Device Identity
+  device_name: "REPLACE_WITH_DEVICE_NAME"         # e.g. "step_monitor" (lowercase letters, numbers, and underscores only)
+  friendly_name: "REPLACE_WITH_FRIENDLY_NAME"     # e.g. "Step Monitor"
+
+  # API, OTA & Fallback AP Access
+  #
+  # ⚠️ These values MUST match what was set during the first flash,
+  # or OTA uploads, API access, and fallback Wi-Fi mode may fail.
+  api_key: "REPLACE_WITH_YOUR_API_KEY"            # e.g. "Ae7W...="
+  ota_password: "REPLACE_WITH_YOUR_OTA_PASSWORD"  # e.g. "abc123secure"
+  ap_ssid: "REPLACE_WITH_YOUR_AP_SSID"            # e.g. "Step-Monitor Fallback Hotspot"
+  ap_password: "REPLACE_WITH_YOUR_AP_PASSWORD"    # e.g. "strongpassword123"
+
+  # Entity and step goal
+  step_entity_id: "REPLACE_WITH_YOUR_STEP_SENSOR_ENTITY_ID"  # e.g. "sensor.galaxy_watch_6_daily_steps"
+  step_target_default: "10000"                               # Initial default step target (optional to change)
+
+  # Pin Configuration for Display Backlight and UART
+
+  # LCD Screen Backlight (PWM controlled)
+  pin_backlight_pwm: GPIO27  # Use GPIO27 or GPIO21 — whichever is *not* used for uart_tx
+
+  # UART Configuration (for communicating with the LCD driver)
+  uart_tx: GPIO21            # Use GPIO21 or GPIO27 — must be different from pin_backlight_pwm
+  uart_rx: GPIO35            # RX can be any available pin
+
+  pin_red_led: GPIO4
+  pin_green_led: GPIO16
+  pin_blue_led: GPIO17
+
+  # Display SPI (TFT)
+  display_model: st7789v     # Options: ili9341, st7789v
+  tft_clk: GPIO14
+  tft_mosi: GPIO13
+  tft_miso: GPIO12
+  tft_cs: GPIO15
+  tft_dc: GPIO2
+
+  # Touch SPI
+  touch_clk: GPIO25
+  touch_mosi: GPIO32
+  touch_miso: GPIO39
+
+# ----------------------------
+# Wi-Fi & OTA Setup
+# ----------------------------
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# Optional: Uncomment and update for a static IP
+#  manual_ip:
+#    static_ip: 192.168.1.123
+#    gateway: 192.168.1.1
+#    subnet: 255.255.255.0
+
+  # ===========================================================
+  # ✅ END OF USER CONFIGURATION SECTION
+  # ⚠️ Do not edit anything below unless you know how it works
+  # ===========================================================
+  
+
+  ap:
+    ssid: "${ap_ssid}"
+    password: "${ap_password}"
+
+logger:
+
+api:
+  encryption:
+    key: ${api_key}
+
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    then:
+      - script.execute: turn_off_rgb_led
+      - script.execute: recalculate_step_target_status
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+
+ota:
+  - platform: esphome
+    password: ${ota_password}
+
+captive_portal:
+
+font:
+  - file: "fonts/PixeloidSans.ttf"
+    id: font1
+    size: 45
+    glyphs: "0123456789"
+
+color:
+  - id: ha_blue
+    hex: 51c0f2
+  - id: white
+    hex: FFFFFF
+  - id: red
+    hex: FF0000
+  - id: green
+    hex: 00FF00
+
+
+# ----------------------------
+# Step Sensor & Target
+# ----------------------------
+
+sensor:
+  - platform: homeassistant
+    id: daily_steps
+    entity_id: ${step_entity_id}
+    on_value:
+      then:
+        - script.execute: recalculate_step_target_status
+
+
+number:
+  - platform: template
+    name: "Daily Step Target"
+    id: daily_step_target
+    min_value: 1000
+    max_value: 30000
+    step: 500
+    initial_value: ${step_target_default}
+    restore_value: true
+    optimistic: true
+    mode: slider
+    on_value:
+      then:
+        - script.execute: recalculate_step_target_status
+
+
+globals:
+  - id: step_target_status
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+
+# ----------------------------
+# Scripts
+# ----------------------------
+
+ 
+script:
+  - id: recalculate_step_target_status
+    then:
+      - lambda: |-
+          if (isnan(id(daily_steps).state) || !id(esptime).now().is_valid()) {
+            id(step_target_status) = false;
+          } else {
+            int minutes_passed = id(esptime).now().hour * 60 + id(esptime).now().minute;
+            float expected_steps = (id(daily_step_target).state / 1440.0) * minutes_passed;
+            id(step_target_status) = id(daily_steps).state >= round(expected_steps);
+          }
+
+
+  - id: turn_off_rgb_led
+    then:
+      - output.turn_off: red_led
+      - output.turn_off: green_led
+      - output.turn_off: blue_led
+
+
+# ----------------------------
+# Time
+# ----------------------------
+
+
+time:
+  - platform: homeassistant
+    id: esptime
+
+
+# ----------------------------
+# Light Outputs
+# ----------------------------
+
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: Display Backlight
+    id: backlight
+    restore_mode: ALWAYS_ON
+
+  - platform: rgb
+    name: "Onboard RGB LED"
+    red: red_led
+    green: green_led
+    blue: blue_led
+
+
+# ----------------------------
+# SPI & UART
+# ----------------------------
+
+
+spi:
+  - id: tft
+    clk_pin: ${tft_clk}
+    mosi_pin: ${tft_mosi}
+    miso_pin: ${tft_miso}
+
+  - id: touch
+    clk_pin: ${touch_clk}
+    mosi_pin: ${touch_mosi}
+    miso_pin: ${touch_miso}
+
+
+####################################################
+###  The pins for UART and Output can't be the same
+####################################################
+
+uart:
+  tx_pin: ${uart_tx}
+  rx_pin: ${uart_rx}
+  baud_rate: 9600
+
+# ----------------------------
+# Output Pins
+# ----------------------------
+
+output:
+  - platform: ledc
+    pin: ${pin_backlight_pwm}
+    id: backlight_pwm
+
+  - platform: ledc
+    pin: ${pin_red_led}
+    id: red_led
+    inverted: true
+
+  - platform: ledc
+    pin: ${pin_green_led}
+    id: green_led
+    inverted: true
+
+  - platform: ledc
+    pin: ${pin_blue_led}
+    id: blue_led
+    inverted: true
+
+# ----------------------------
+# Display
+# ----------------------------
+
+
+display:
+  - platform: ili9xxx
+    model: ${display_model}
+    spi_id: tft
+    cs_pin: ${tft_cs}
+    dc_pin: ${tft_dc}
+    rotation: 0
+    invert_colors: false
+    update_interval: 1s
+    color_order: BGR
+    lambda: |-
+      int steps = (isnan(id(daily_steps).state)) ? 0 : (int) id(daily_steps).state;
+      
+      bool goal = id(step_target_status);
+
+      Color step_color = goal ? Color(0, 255, 0) : Color(255, 0, 0);
+
+      char steps_str[20];
+      sprintf(steps_str, "%d", steps);
+      it.printf(120, 60, id(font1), step_color, TextAlign::CENTER, steps_str);
+
+      // your smiley drawing below
+
+
+      static const int smiley_yes[16][16] = {
+        {0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0},
+        {0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0},
+        {0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0},
+        {0,1,0,0,0,0,0,0,0,0,0,0,0,0,1,0},
+        {0,1,0,0,1,1,0,0,0,0,1,1,0,0,1,0},
+        {1,0,0,0,1,1,0,0,0,0,1,1,0,0,0,1},
+        {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        {1,0,0,0,1,0,0,0,0,0,0,1,0,0,0,1},
+        {0,1,0,0,0,1,0,0,0,0,1,0,0,0,1,0},
+        {0,1,0,0,0,0,1,1,1,1,0,0,0,0,1,0},
+        {0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0},
+        {0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0},
+        {0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0}
+      };
+
+      static const int smiley_no[16][16] = {
+        {0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0},
+        {0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0},
+        {0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0},
+        {0,1,0,0,0,0,0,0,0,0,0,0,0,0,1,0},
+        {0,1,0,0,1,1,0,0,0,0,1,1,0,0,1,0},
+        {1,0,0,0,1,1,0,0,0,0,1,1,0,0,0,1},
+        {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        {1,0,0,0,0,0,1,1,1,1,0,0,0,0,0,1},
+        {0,1,0,0,0,1,0,0,0,0,1,0,0,0,1,0},
+        {0,1,0,0,0,1,0,0,0,0,1,0,0,0,1,0},
+        {0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0},
+        {0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0},
+        {0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0}
+      };
+
+      const int pixel_size = 11;
+      int base_x = (240 - (16 * pixel_size)) / 2;
+      int base_y = (320 - (16 * pixel_size)) * 9 / 10;
+
+      const int (*smiley)[16] = goal ? smiley_yes : smiley_no;
+
+      for (int i = 0; i < 16; i++) {
+        for (int j = 0; j < 16; j++) {
+          if (smiley[i][j] == 1) {
+            it.filled_rectangle(base_x + j * pixel_size, base_y + i * pixel_size,
+                                 pixel_size, pixel_size, step_color);
+          }
+        }
+      }
+
